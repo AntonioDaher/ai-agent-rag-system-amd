@@ -20,7 +20,7 @@ from src.document_processor.chunker import TextChunker
 from src.embeddings.embedding import EmbeddingManager
 from src.retrieval.vector_store import VectorStoreManager
 from src.rag.pipeline import RAGPipeline
-from src.agents.agent import AgentOrchestrator
+from src.agents.agent import AIAgent
 
 logger = setup_logger(__name__)
 
@@ -41,16 +41,17 @@ if "total_documents" not in st.session_state:
 
 
 @st.cache_resource
-def initialize_pipeline(groq_api_key: str):
+def initialize_pipeline(groq_api_key: str, model_name: str = "llama-3.3-70b-versatile"):
     """Initialize RAG pipeline (cached for performance)"""
     try:
         # Set API key in environment
         os.environ["OPENAI_API_KEY"] = groq_api_key
         os.environ["OPENAI_API_BASE"] = "https://api.groq.com/openai/v1"
         
-        # Force settings reload with new API key
+        # Force settings reload with new API key and model
         settings.openai_api_key = groq_api_key
         settings.groq_api_key = groq_api_key
+        settings.llm_model = model_name
         
         # Initialize pipeline
         pipeline = RAGPipeline(use_openai_embeddings=False)
@@ -80,8 +81,9 @@ def process_uploaded_file(uploaded_file, pipeline: RAGPipeline):
             tmp_path = tmp_file.name
         
         try:
-            # Get appropriate processor
-            processor = DocumentProcessorFactory.get_processor(tmp_path)
+            # Get appropriate processor for file extension
+            file_extension = Path(uploaded_file.name).suffix.lower().strip('.')
+            processor = DocumentProcessorFactory.get_processor(file_extension)
             
             # Extract text
             text_content = processor.process(tmp_path)
@@ -159,32 +161,35 @@ with st.sidebar:
         help="Get your free API key from: https://console.groq.com"
     )
     
+    st.divider()
+    
+    # Model settings (before pipeline initialization)
+    st.subheader("🔧 Model Settings")
+    model_name = st.selectbox(
+        "LLM Model",
+        options=["llama-3.3-70b-versatile", "llama3-70b-8192", "mixtral-8x7b-32768"],
+        index=0,
+        help="Choose the AI model for responses"
+    )
+    temperature = st.slider("Temperature", 0.0, 1.0, 0.7, 0.1, help="Higher = more creative, Lower = more focused")
+    
+    st.divider()
+    
+    # Initialize pipeline with selected model
     if groq_api_key:
         st.success("✅ API Key configured")
-        st.session_state["pipeline"] = initialize_pipeline(groq_api_key)
+        st.session_state["pipeline"] = initialize_pipeline(groq_api_key, model_name)
         
+        # Update temperature setting
         if st.session_state["pipeline"]:
+            settings.llm_temperature = temperature
+            
             # Show vector store stats
             stats = get_vector_store_stats(st.session_state["pipeline"])
             st.metric("Documents in Store", stats["total_chunks"])
     else:
         st.warning("⚠️ Please enter your Groq API key to continue")
         st.info("Get a free API key at [console.groq.com](https://console.groq.com)")
-    
-    st.divider()
-    
-    # Model settings
-    with st.expander("🔧 Advanced Settings"):
-        model_name = st.selectbox(
-            "LLM Model",
-            options=["llama-3.3-70b-versatile", "llama3-70b-8192", "mixtral-8x7b-32768"],
-            index=0
-        )
-        temperature = st.slider("Temperature", 0.0, 1.0, 0.7, 0.1)
-        
-        if st.session_state["pipeline"]:
-            settings.llm_model = model_name
-            settings.llm_temperature = temperature
 
 
 # Main content
@@ -361,14 +366,15 @@ if ask_clicked:
                 # Determine if we need RAG
                 if show_upload and has_documents:
                     # RAG Query
-                    retrieved_docs = pipeline.retrieve(query, top_k=top_k)
-                    
                     if use_agent:
-                        # Use agent for complex queries
-                        agent = AgentOrchestrator(pipeline)
-                        response = agent.run(query)
+                        # Use agent for complex queries (handles retrieval internally)
+                        agent = AIAgent(pipeline)
+                        result = agent.process_query(query, top_k=top_k)
+                        response = result.get('response', '')
+                        retrieved_docs = result.get('retrieved_docs', [])
                     else:
                         # Standard RAG response
+                        retrieved_docs = pipeline.retrieve(query, top_k=top_k)
                         response = pipeline.generate_response(query, retrieved_docs)
                     
                     # Display response
@@ -396,11 +402,14 @@ if ask_clicked:
                 else:
                     # Direct LLM Query (no RAG)
                     if use_agent:
-                        agent = AgentOrchestrator(pipeline)
-                        response = agent.run(query)
+                        agent = AIAgent(pipeline)
+                        result = agent.process_query(query, top_k=0)
+                        response = result.get('response', '')
+                        retrieved_docs = []
                     else:
                         # Direct LLM call without retrieval
                         response = pipeline.generate_response(query, [])
+                        retrieved_docs = []
                     
                     st.success("✅ Answer:")
                     st.markdown(response)

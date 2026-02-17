@@ -23,7 +23,7 @@ class Settings(BaseSettings):
     groq_api_key: str = ""
     
     # LLM Configuration
-    llm_model: str = "gpt-3.5-turbo"
+    llm_model: str = "llama-3.3-70b-versatile"  # Groq's newest and fastest model
     llm_temperature: float = 0.7
     llm_max_tokens: int = 2000
     
