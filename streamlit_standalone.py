@@ -38,6 +38,8 @@ if "vector_store_loaded" not in st.session_state:
     st.session_state["vector_store_loaded"] = False
 if "total_documents" not in st.session_state:
     st.session_state["total_documents"] = 0
+if "uploaded_files_info" not in st.session_state:
+    st.session_state["uploaded_files_info"] = []  # Track uploaded files
 
 
 @st.cache_resource
@@ -218,6 +220,12 @@ if show_upload:
     st.divider()
     st.subheader("2️⃣ Upload Documents")
     
+    # Show previously uploaded files if any
+    if st.session_state["uploaded_files_info"]:
+        with st.expander("📁 Previously Uploaded Files", expanded=False):
+            for file_info in st.session_state["uploaded_files_info"]:
+                st.text(f"✓ {file_info['name']} - {file_info['chunks']} chunks")
+    
     upload_col, info_col = st.columns([2, 3])
     
     with upload_col:
@@ -264,6 +272,17 @@ Supported formats: PDF, TXT, CSV, XLSX, DOCX
                 if success:
                     st.success(f"✅ {uploaded_file.name} - {chunks} chunks indexed")
                     total_chunks += chunks
+                    
+                    # Store uploaded file info in session state
+                    file_info = {
+                        "name": uploaded_file.name,
+                        "chunks": chunks,
+                        "size": uploaded_file.size
+                    }
+                    # Check if file already exists in the list (avoid duplicates)
+                    existing_names = [f["name"] for f in st.session_state["uploaded_files_info"]]
+                    if uploaded_file.name not in existing_names:
+                        st.session_state["uploaded_files_info"].append(file_info)
                 else:
                     st.error(f"❌ {uploaded_file.name} - Error: {error}")
                 
@@ -289,6 +308,7 @@ Supported formats: PDF, TXT, CSV, XLSX, DOCX
                 if success:
                     st.success("🗑️ Vector store reset successfully!")
                     st.session_state["reset_confirmation"] = False
+                    st.session_state["uploaded_files_info"] = []  # Clear uploaded files info
                     st.rerun()
                 else:
                     st.error(f"❌ Reset failed: {error}")
@@ -353,13 +373,14 @@ with ask_col:
 with clear_col:
     clear_clicked = st.button("🧹 Clear", use_container_width=True)
 
-# Handle clear button
+# Handle clear button first (before updating session state)
 if clear_clicked:
     st.session_state["query_input"] = ""
     st.rerun()
 
-# Update session state with current query text
-st.session_state["query_input"] = query_text
+# Update session state with current query text (only if not clearing)
+if not clear_clicked:
+    st.session_state["query_input"] = query_text
 
 # Process query
 if ask_clicked:
