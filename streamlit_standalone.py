@@ -102,12 +102,7 @@ def process_uploaded_file(uploaded_file, pipeline: RAGPipeline):
             ]
             
             # Add to vector store
-            pipeline.vector_store_manager.add_documents(chunks, embeddings)
-            
-            # Save vector store
-            vector_store_path = settings.data_path / "vector_store"
-            vector_store_path.mkdir(parents=True, exist_ok=True)
-            pipeline.vector_store_manager.save(str(vector_store_path))
+            pipeline.vector_store_manager.add_chunks(chunks, embeddings)
             
             return True, len(chunks), None
         
@@ -124,8 +119,8 @@ def process_uploaded_file(uploaded_file, pipeline: RAGPipeline):
 def get_vector_store_stats(pipeline: RAGPipeline):
     """Get statistics about the vector store"""
     try:
-        total = pipeline.vector_store_manager.count()
-        return {"total_chunks": total, "status": "ok"}
+        stats = pipeline.vector_store_manager.get_statistics()
+        return {"total_chunks": stats.get("total_chunks", 0), "status": "ok"}
     except:
         return {"total_chunks": 0, "status": "empty"}
 
@@ -133,11 +128,12 @@ def get_vector_store_stats(pipeline: RAGPipeline):
 def reset_vector_store(pipeline: RAGPipeline):
     """Reset the vector store"""
     try:
-        pipeline.vector_store_manager.reset()
-        vector_store_path = settings.data_path / "vector_store"
-        if vector_store_path.exists():
-            import shutil
-            shutil.rmtree(vector_store_path)
+        # Get uploads directory path
+        uploads_dir = str(settings.uploads_path) if hasattr(settings, 'uploads_path') else None
+        
+        # Clear vector store (this also handles file deletion)
+        pipeline.vector_store_manager.clear(uploads_dir=uploads_dir)
+        
         return True, None
     except Exception as e:
         return False, str(e)
