@@ -3,7 +3,7 @@ import json
 import requests
 import streamlit as st
 
-DEFAULT_API_URL = os.getenv("RAG_API_URL", "http://127.0.0.1:9011")
+DEFAULT_API_URL = os.getenv("RAG_API_URL", "https://ai-agent-rag-api.onrender.com")
 DEFAULT_API_KEY = os.getenv("RAG_API_KEY", "")
 
 
