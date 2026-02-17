@@ -1,4 +1,4 @@
-# AI Agent RAG System - Quick Start Guide
+# AI Agent RAG System
 
 <!-- Optional badges (replace placeholders) -->
 <!--
@@ -8,6 +8,28 @@
 
 ## Overview
 A production-ready Generative AI application enabling enterprise users to query documents using autonomous AI agents with Retrieval-Augmented Generation (RAG).
+
+## 🚀 Quick Start (Standalone Version - Recommended)
+
+**For the easiest deployment**, use the standalone Streamlit app:
+
+```bash
+# Install dependencies
+pip install -r requirements.txt
+
+# Run the standalone app
+streamlit run streamlit_standalone.py
+```
+
+Then open http://localhost:8501 and enter your Groq API key!
+
+**📖 Full deployment guide**: See [STANDALONE_DEPLOYMENT.md](STANDALONE_DEPLOYMENT.md)
+
+---
+
+## Alternative: API + Frontend Architecture
+
+If you need a separate API server, see the sections below.
 
 ## Key Features
 - 📄 Multi-format document support (PDF, TXT, CSV, Excel, DOCX)
