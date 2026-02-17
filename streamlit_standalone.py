@@ -322,11 +322,15 @@ with query_col:
     
     query_disabled = show_upload and not has_documents
     
+    # Initialize query text in session state if not exists
+    if "query_input" not in st.session_state:
+        st.session_state["query_input"] = ""
+    
     query_text = st.text_area(
         "Your question:",
+        value=st.session_state["query_input"],
         placeholder=placeholder,
         height=120,
-        key="query_text",
         disabled=query_disabled,
     )
 
@@ -346,9 +350,15 @@ with ask_col:
     ask_clicked = st.button("🔍 Ask", use_container_width=True, type="primary")
 
 with clear_col:
-    if st.button("🧹 Clear", use_container_width=True):
-        st.session_state["query_text"] = ""
-        st.rerun()
+    clear_clicked = st.button("🧹 Clear", use_container_width=True)
+
+# Handle clear button
+if clear_clicked:
+    st.session_state["query_input"] = ""
+    st.rerun()
+
+# Update session state with current query text
+st.session_state["query_input"] = query_text
 
 # Process query
 if ask_clicked:
