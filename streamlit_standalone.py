@@ -337,11 +337,12 @@ with query_col:
 with options_col:
     if show_upload:
         top_k = st.slider("Results", min_value=1, max_value=10, value=3, help="Number of relevant chunks to retrieve")
+        use_agent = st.checkbox("🤖 Use Agent", value=False, help="Use AI agent for complex queries")
+        show_details = st.checkbox("📋 Show Details", value=False, help="Show retrieved documents")
     else:
         top_k = 0
-    
-    use_agent = st.checkbox("🤖 Use Agent", value=False, help="Use AI agent for complex queries")
-    show_details = st.checkbox("📋 Show Details", value=False, help="Show retrieved documents")
+        use_agent = False  # Agent not applicable for direct LLM queries
+        show_details = False
 
 # Query buttons
 ask_col, clear_col = st.columns([1, 1])
@@ -411,11 +412,23 @@ if ask_clicked:
                         agent = AIAgent(pipeline)
                         result = agent.process_query(query, top_k=0)
                         response = result.get('response', '')
-                        retrieved_docs = []
                     else:
-                        # Direct LLM call without retrieval
-                        response = pipeline.generate_response(query, [])
-                        retrieved_docs = []
+                        # Direct LLM call without retrieval - use custom prompt
+                        direct_system_prompt = """You are a helpful and knowledgeable AI assistant.
+                        
+                        Guidelines:
+                        - Answer questions directly and clearly
+                        - Use your general knowledge to provide accurate information
+                        - Be concise but thorough
+                        - If you're unsure about something, say so
+                        - Provide helpful context when appropriate"""
+                        
+                        # Call LLM directly with custom prompt
+                        messages = [
+                            pipeline.SystemMessage(content=direct_system_prompt),
+                            pipeline.HumanMessage(content=query)
+                        ]
+                        response = pipeline.llm.invoke(messages).content
                     
                     st.success("✅ Answer:")
                     st.markdown(response)
