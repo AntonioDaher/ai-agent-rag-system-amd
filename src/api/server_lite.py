@@ -381,6 +381,5 @@ async def root():
         "status": "operational"
     }
 
+# Server ready message
 print("✓ Server initialized successfully")
-print("✓ Running at http://127.0.0.1:9011")
-print("✓ API Documentation: http://127.0.0.1:9011/docs")
