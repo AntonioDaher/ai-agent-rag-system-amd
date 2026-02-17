@@ -5,7 +5,7 @@ services:
     plan: free
     runtime: python-3.11
     buildCommand: pip install -r requirements.txt
-    startCommand: python -m src.api.server_lite
+    startCommand: uvicorn src.api.server_lite:app --host 0.0.0.0 --port $PORT
     envVars:
       - key: GROQ_API_KEY
         sync: false
