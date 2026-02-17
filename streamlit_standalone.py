@@ -40,6 +40,10 @@ if "total_documents" not in st.session_state:
     st.session_state["total_documents"] = 0
 if "uploaded_files_info" not in st.session_state:
     st.session_state["uploaded_files_info"] = []  # Track uploaded files
+if "user_decision_made" not in st.session_state:
+    st.session_state["user_decision_made"] = False  # Track if user decided on existing files
+if "previous_query_mode" not in st.session_state:
+    st.session_state["previous_query_mode"] = None  # Track mode changes
 
 
 @st.cache_resource
@@ -215,14 +219,58 @@ query_mode = st.radio(
 
 show_upload = query_mode == "📚 RAG Query (Search uploaded documents)"
 
+# Detect mode change and reset decision flag when switching back to RAG mode
+if st.session_state["previous_query_mode"] != query_mode:
+    if query_mode == "📚 RAG Query (Search uploaded documents)" and st.session_state["uploaded_files_info"]:
+        # User switched back to RAG mode and has previous files - need to prompt again
+        st.session_state["user_decision_made"] = False
+    st.session_state["previous_query_mode"] = query_mode
+
 # Document Upload Section
 if show_upload:
     st.divider()
     st.subheader("2️⃣ Upload Documents")
     
-    # Show previously uploaded files if any
-    if st.session_state["uploaded_files_info"]:
-        with st.expander("📁 Previously Uploaded Files", expanded=False):
+    # Check if there are previously uploaded files and user hasn't decided yet
+    has_previous_files = len(st.session_state["uploaded_files_info"]) > 0
+    
+    if has_previous_files and not st.session_state["user_decision_made"]:
+        # Show decision prompt
+        st.info("📂 **You have previously uploaded documents.**")
+        
+        # Show list of previous files
+        st.write("**Previously uploaded files:**")
+        for file_info in st.session_state["uploaded_files_info"]:
+            st.text(f"✓ {file_info['name']} - {file_info['chunks']} chunks")
+        
+        st.divider()
+        st.warning("⚠️ **What would you like to do?**")
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            if st.button("✅ Continue with existing files", use_container_width=True, type="primary"):
+                st.session_state["user_decision_made"] = True
+                st.rerun()
+        
+        with col2:
+            if st.button("🗑️ Reset and start fresh", use_container_width=True):
+                # Reset everything
+                success, error = reset_vector_store(pipeline)
+                if success:
+                    st.session_state["uploaded_files_info"] = []
+                    st.session_state["user_decision_made"] = True
+                    st.success("🗑️ Vector store reset successfully!")
+                    st.rerun()
+                else:
+                    st.error(f"❌ Reset failed: {error}")
+        
+        # Don't show file uploader until user decides
+        st.stop()
+    
+    # User has decided or no previous files - show normal upload interface
+    if has_previous_files and st.session_state["user_decision_made"]:
+        with st.expander("📁 Current Files in Vector Store", expanded=False):
             for file_info in st.session_state["uploaded_files_info"]:
                 st.text(f"✓ {file_info['name']} - {file_info['chunks']} chunks")
     
@@ -309,6 +357,7 @@ Supported formats: PDF, TXT, CSV, XLSX, DOCX
                     st.success("🗑️ Vector store reset successfully!")
                     st.session_state["reset_confirmation"] = False
                     st.session_state["uploaded_files_info"] = []  # Clear uploaded files info
+                    st.session_state["user_decision_made"] = False  # Reset decision flag
                     st.rerun()
                 else:
                     st.error(f"❌ Reset failed: {error}")
