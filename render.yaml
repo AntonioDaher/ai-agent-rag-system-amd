@@ -1,15 +1,14 @@
 services:
   - type: web
-    name: ai-agent-rag-streamlit
+    name: ai-agent-rag-api
     env: python
     plan: free
     runtime: python-3.11
-    buildCommand: pip install -r requirements.txt
-    startCommand: streamlit run streamlit_app.py --server.port=$PORT --server.address=0.0.0.0 --server.headless=true
+    buildCommand: pip install -r requirements-full.txt
+    startCommand: uvicorn src.api.server_lite:app --host 0.0.0.0 --port $PORT
     envVars:
       - key: GROQ_API_KEY
         sync: false
       - key: RAG_API_KEY
         sync: false
-      - key: RAG_API_URL
-        value: https://ai-agent-rag-api.onrender.com
+
