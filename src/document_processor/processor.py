@@ -104,11 +104,11 @@ class ExcelProcessor(DocumentProcessor):
         
         text = ""
         try:
-            excel_file = pd.ExcelFile(file_path)
-            for sheet_name in excel_file.sheet_names:
-                df = pd.read_excel(file_path, sheet_name=sheet_name)
-                text += f"\n--- Sheet: {sheet_name} ---\n"
-                text += df.to_string()
+            with pd.ExcelFile(file_path) as excel_file:
+                for sheet_name in excel_file.sheet_names:
+                    df = pd.read_excel(excel_file, sheet_name=sheet_name)
+                    text += f"\n--- Sheet: {sheet_name} ---\n"
+                    text += df.to_string()
             logger.info(f"Successfully processed Excel: {file_path}")
         except Exception as e:
             logger.error(f"Error processing Excel {file_path}: {str(e)}")

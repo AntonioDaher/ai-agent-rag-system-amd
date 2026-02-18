@@ -26,7 +26,7 @@ logger = setup_logger(__name__)
 
 # Configure Streamlit page
 st.set_page_config(
-    page_title="AI Agent RAG System (Standalone)",
+    page_title="AI Agent RAG System",
     page_icon="📄",
     layout="wide",
 )
@@ -44,9 +44,15 @@ if "user_decision_made" not in st.session_state:
     st.session_state["user_decision_made"] = False  # Track if user decided on existing files
 if "previous_query_mode" not in st.session_state:
     st.session_state["previous_query_mode"] = None  # Track mode changes
+if "widget_refresh_counter" not in st.session_state:
+    st.session_state["widget_refresh_counter"] = 0  # Force widget refresh when cleared
+if "previous_model" not in st.session_state:
+    st.session_state["previous_model"] = None  # Track model changes
+if "vector_store_reset" not in st.session_state:
+    st.session_state["vector_store_reset"] = False  # Track if vector store was reset on init
 
 
-@st.cache_resource
+@st.cache_resource(show_spinner=False)
 def initialize_pipeline(groq_api_key: str, model_name: str = "llama-3.3-70b-versatile"):
     """Initialize RAG pipeline (cached for performance)"""
     try:
@@ -62,14 +68,7 @@ def initialize_pipeline(groq_api_key: str, model_name: str = "llama-3.3-70b-vers
         # Initialize pipeline
         pipeline = RAGPipeline(use_openai_embeddings=False)
         
-        # Try to load existing vector store
-        try:
-            vector_store_path = settings.data_path / "vector_store"
-            if vector_store_path.exists():
-                pipeline.vector_store_manager.load(str(vector_store_path))
-                logger.info("Loaded existing vector store")
-        except Exception as e:
-            logger.warning(f"Could not load existing vector store: {e}")
+        # Don't load existing vector store - will be reset on page load
         
         return pipeline
     except Exception as e:
@@ -146,22 +145,43 @@ def reset_vector_store(pipeline: RAGPipeline):
 
 
 # App Title
-st.title("🤖 AI Agent RAG System (Standalone)")
-st.caption("Upload documents and query using AI - No external server required!")
+st.title("🤖 AI Agent RAG System")
+st.caption("Direct LLM Query or RAG Query")
 
 # Sidebar configuration
 with st.sidebar:
     st.header("⚙️ Configuration")
     
-    # Get API key from Streamlit secrets or user input
+    # Get default API key from Streamlit secrets or environment
     default_key = st.secrets.get("GROQ_API_KEY", "") if hasattr(st, "secrets") else os.getenv("GROQ_API_KEY", "")
     
-    groq_api_key = st.text_input(
-        "Groq API Key",
-        value=default_key,
-        type="password",
-        help="Get your free API key from: https://console.groq.com"
+    # Checkbox to enable custom API key input
+    use_custom_api = st.checkbox(
+        "🔑 Use Custom API Key",
+        value=False,
+        help="Enable to enter your own Groq API key"
     )
+    
+    # Show API key input only if checkbox is checked
+    if use_custom_api:
+        groq_api_key = st.text_input(
+            "GROQ API Key",
+            value="",
+            type="password",
+            placeholder="Enter your Groq API key",
+            help="Get your free API key from: https://console.groq.com"
+        )
+    else:
+        # Use default key from secrets/environment
+        groq_api_key = default_key
+        # Display greyed out info
+        st.text_input(
+            "GROQ API Key",
+            value="Using default API key" if default_key else "",
+            type="password",
+            disabled=True,
+            help="Enable 'Use Custom API Key' above to enter your own key"
+        )
     
     st.divider()
     
@@ -169,10 +189,20 @@ with st.sidebar:
     st.subheader("🔧 Model Settings")
     model_name = st.selectbox(
         "LLM Model",
-        options=["llama-3.3-70b-versatile", "llama3-70b-8192", "mixtral-8x7b-32768"],
+        options=[
+            "llama-3.3-70b-versatile",
+            "llama-3.1-8b-instant"
+        ],
         index=0,
         help="Choose the AI model for responses"
     )
+    
+    # Reset query input when model changes
+    if st.session_state["previous_model"] != model_name:
+        st.session_state["query_input"] = ""
+        st.session_state["widget_refresh_counter"] += 1
+        st.session_state["previous_model"] = model_name
+    
     temperature = st.slider("Temperature", 0.0, 1.0, 0.7, 0.1, help="Higher = more creative, Lower = more focused")
     
     st.divider()
@@ -180,11 +210,25 @@ with st.sidebar:
     # Initialize pipeline with selected model
     if groq_api_key:
         st.success("✅ API Key configured")
-        st.session_state["pipeline"] = initialize_pipeline(groq_api_key, model_name)
+        
+        # Show initialization spinner with custom message
+        with st.spinner("⚙️ Initialization..."):
+            st.session_state["pipeline"] = initialize_pipeline(groq_api_key, model_name)
         
         # Update temperature setting
         if st.session_state["pipeline"]:
             settings.llm_temperature = temperature
+            
+            # Reset vector store on first load/page refresh
+            if not st.session_state["vector_store_reset"]:
+                try:
+                    st.session_state["pipeline"].vector_store_manager.clear()
+                    st.session_state["uploaded_files_info"] = []
+                    st.session_state["user_decision_made"] = False
+                    st.session_state["vector_store_reset"] = True
+                    logger.info("Vector store reset on page initialization")
+                except Exception as e:
+                    logger.warning(f"Could not reset vector store: {e}")
             
             # Show vector store stats
             stats = get_vector_store_stats(st.session_state["pipeline"])
@@ -210,7 +254,7 @@ st.subheader("1️⃣ Query Mode")
 query_mode = st.radio(
     "Choose your query mode:",
     options=[
-        "💬 LLM Direct Query (No documents needed)",
+        "💬 LLM Direct Query (No Uploads)",
         "📚 RAG Query (Search uploaded documents)",
     ],
     index=0,
@@ -224,12 +268,15 @@ if st.session_state["previous_query_mode"] != query_mode:
     if query_mode == "📚 RAG Query (Search uploaded documents)" and st.session_state["uploaded_files_info"]:
         # User switched back to RAG mode and has previous files - need to prompt again
         st.session_state["user_decision_made"] = False
+    # Reset query input and increment widget counter when switching modes
+    st.session_state["query_input"] = ""
+    st.session_state["widget_refresh_counter"] += 1
     st.session_state["previous_query_mode"] = query_mode
 
 # Document Upload Section
 if show_upload:
     st.divider()
-    st.subheader("2️⃣ Upload Documents")
+    st.subheader("2️⃣ Upload(s)")
     
     # Check if there are previously uploaded files and user hasn't decided yet
     has_previous_files = len(st.session_state["uploaded_files_info"]) > 0
@@ -278,7 +325,7 @@ if show_upload:
     
     with upload_col:
         uploaded_files = st.file_uploader(
-            "Choose document(s)",
+            "Choose document(s) / file(s)",
             type=["pdf", "txt", "csv", "xlsx", "docx"],
             accept_multiple_files=True,
             key="file_uploader",
@@ -337,7 +384,26 @@ Supported formats: PDF, TXT, CSV, XLSX, DOCX
                 progress_bar.progress((idx + 1) / total_files)
             
             status_text.text(f"✅ Complete! Indexed {total_chunks} chunks from {total_files} files")
+            
+            # Mark decision as made so prompt doesn't show again until mode switch
+            st.session_state["user_decision_made"] = True
+            
+            # Save vector store to persist changes
+            try:
+                vector_store_path = settings.data_path / "vector_store"
+                pipeline.vector_store_manager.save(str(vector_store_path))
+            except Exception as e:
+                logger.warning(f"Could not save vector store: {e}")
+            
+            # Show success animation
             st.balloons()
+            
+            # Small delay to allow balloons animation before rerun
+            import time
+            time.sleep(1)
+            
+            # Trigger rerun to refresh the UI and show newly uploaded files in the dropdown
+            st.rerun()
     
     # Handle reset
     if "reset_confirmation" not in st.session_state:
@@ -370,44 +436,74 @@ Supported formats: PDF, TXT, CSV, XLSX, DOCX
 # Query Section
 st.divider()
 query_step = "3️⃣" if show_upload else "2️⃣"
-st.subheader(f"{query_step} Ask Your Question")
+st.subheader(f"{query_step} Querying")
 
-# Check if documents exist for RAG mode
+# Check if documents exist for RAG mode - must be done every time
 has_documents = False
 if show_upload:
     stats = get_vector_store_stats(pipeline)
-    has_documents = stats["total_chunks"] > 0
+    total_chunks = stats.get("total_chunks", 0)
+    has_documents = total_chunks > 0
     
+    # Show clear warning when no documents
     if not has_documents:
-        st.info("📁 No documents indexed yet. Upload documents above to use RAG mode.")
+        st.error("🚫 **RAG Query requires documents!** Please upload documents above first.")
 
 query_col, options_col = st.columns([3, 1])
 
 with query_col:
-    if query_mode == "💬 LLM Direct Query (No documents needed)":
+    # Determine placeholder and disabled state based on mode
+    if query_mode == "💬 LLM Direct Query (No Uploads)":
         placeholder = "Ask me anything..."
+        query_disabled = False
     else:
-        placeholder = "Ask about your uploaded documents..." if has_documents else "⚠️ Upload documents first..."
-    
-    query_disabled = show_upload and not has_documents
+        # RAG mode
+        if has_documents:
+            placeholder = "Ask about your uploaded documents..."
+            query_disabled = False
+        else:
+            placeholder = "⚠️ Please upload documents first to enable RAG query..."
+            query_disabled = True
     
     # Initialize query text in session state if not exists
     if "query_input" not in st.session_state:
         st.session_state["query_input"] = ""
     
+    # Render text area with explicit disabled state
     query_text = st.text_area(
         "Your question:",
         value=st.session_state["query_input"],
         placeholder=placeholder,
         height=120,
         disabled=query_disabled,
+        key=f"query_text_area_{st.session_state['widget_refresh_counter']}",
+        help="Text input is disabled until documents are uploaded" if query_disabled else None
     )
 
 with options_col:
     if show_upload:
-        top_k = st.slider("Results", min_value=1, max_value=10, value=3, help="Number of relevant chunks to retrieve")
-        use_agent = st.checkbox("🤖 Use Agent", value=False, help="Use AI agent for complex queries")
-        show_details = st.checkbox("📋 Show Details", value=False, help="Show retrieved documents")
+        # Explicitly disable all options when no documents
+        is_disabled = not has_documents
+        top_k = st.slider(
+            "Results", 
+            min_value=1, 
+            max_value=10, 
+            value=3, 
+            help="Disabled: Upload documents first" if is_disabled else "Number of relevant chunks to retrieve",
+            disabled=is_disabled
+        )
+        use_agent = st.checkbox(
+            "🤖 Use Agent", 
+            value=False, 
+            help="Disabled: Upload documents first" if is_disabled else "Use AI agent for complex queries",
+            disabled=is_disabled
+        )
+        show_details = st.checkbox(
+            "📋 Show Details", 
+            value=False, 
+            help="Disabled: Upload documents first" if is_disabled else "Show retrieved documents",
+            disabled=is_disabled
+        )
     else:
         top_k = 0
         use_agent = False  # Agent not applicable for direct LLM queries
@@ -417,19 +513,37 @@ with options_col:
 ask_col, clear_col = st.columns([1, 1])
 
 with ask_col:
-    ask_clicked = st.button("🔍 Ask", use_container_width=True, type="primary")
+    # Explicitly disable Ask button when in RAG mode with no documents
+    if show_upload and not has_documents:
+        ask_button_disabled = True
+        button_help = "Upload documents first to enable RAG queries"
+    else:
+        ask_button_disabled = False
+        button_help = None
+    
+    ask_clicked = st.button(
+        "🔍 Ask", 
+        use_container_width=True, 
+        type="primary", 
+        disabled=ask_button_disabled,
+        help=button_help
+    )
 
 with clear_col:
-    clear_clicked = st.button("🧹 Clear", use_container_width=True)
+    # Disable Clear button when in RAG mode with no documents
+    clear_button_disabled = show_upload and not has_documents
+    clear_clicked = st.button(
+        "🧹 Clear", 
+        use_container_width=True,
+        disabled=clear_button_disabled,
+        help="Upload documents first to enable RAG queries" if clear_button_disabled else None
+    )
 
-# Handle clear button first (before updating session state)
+# Handle clear button - clears immediately and forces widget refresh
 if clear_clicked:
     st.session_state["query_input"] = ""
+    st.session_state["widget_refresh_counter"] += 1  # Force widget recreation
     st.rerun()
-
-# Update session state with current query text (only if not clearing)
-if not clear_clicked:
-    st.session_state["query_input"] = query_text
 
 # Process query
 if ask_clicked:
