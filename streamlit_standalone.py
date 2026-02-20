@@ -50,6 +50,10 @@ if "previous_model" not in st.session_state:
     st.session_state["previous_model"] = None  # Track model changes
 if "vector_store_reset" not in st.session_state:
     st.session_state["vector_store_reset"] = False  # Track if vector store was reset on init
+if "chat_history" not in st.session_state:
+    st.session_state["chat_history"] = []  # Sequential chat flow
+if "conversation_memory_enabled" not in st.session_state:
+    st.session_state["conversation_memory_enabled"] = True  # Toggle ON/OFF (default ON)
 
 
 @st.cache_resource(show_spinner=False)
@@ -142,6 +146,111 @@ def reset_vector_store(pipeline: RAGPipeline):
         return True, None
     except Exception as e:
         return False, str(e)
+
+
+def render_chat_history():
+    """Render chat messages in sequential conversation flow."""
+    if not st.session_state["chat_history"]:
+        st.info("💬 Start the conversation by asking a question below.")
+        return
+
+    for message in st.session_state["chat_history"]:
+        role = message.get("role", "assistant")
+        content = message.get("content", "")
+
+        with st.chat_message(role):
+            st.markdown(content)
+
+            retrieved_docs = message.get("retrieved_docs", [])
+            show_details = message.get("show_details", False)
+
+            if role == "assistant" and show_details:
+                with st.expander("📚 Retrieved Documents", expanded=False):
+                    if not retrieved_docs:
+                        st.info("No relevant documents found.")
+                    else:
+                        for idx, doc in enumerate(retrieved_docs, 1):
+                            similarity = doc.get('similarity', 0)
+                            source = doc.get('source_file', 'Unknown')
+                            chunk_index = doc.get('chunk_index', 0)
+                            total_chunks = doc.get('total_chunks', 0)
+                            content = doc.get('content', '')
+
+                            with st.expander(f"📄 Document {idx}: {source} (chunk {chunk_index}/{total_chunks}) - Similarity: {similarity:.3f}"):
+                                st.text(content)
+
+
+def build_contextual_query(current_query: str, max_messages: int = 6, max_chars_per_message: int = 600) -> str:
+    """Build query with recent chat context when memory is enabled."""
+    if not st.session_state.get("conversation_memory_enabled", False):
+        return current_query
+
+    history = st.session_state.get("chat_history", [])
+    if not history:
+        return current_query
+
+    recent_messages = history[-max_messages:]
+    formatted_history = []
+
+    for msg in recent_messages:
+        role = "User" if msg.get("role") == "user" else "Assistant"
+        content = (msg.get("content") or "").strip()
+        if not content:
+            continue
+        if len(content) > max_chars_per_message:
+            content = content[:max_chars_per_message] + "..."
+        formatted_history.append(f"{role}: {content}")
+
+    if not formatted_history:
+        return current_query
+
+    return (
+        "Use the recent conversation to interpret and answer the current question.\\n\\n"
+        "Conversation History:\\n"
+        + "\\n".join(formatted_history)
+        + f"\\n\\nCurrent Question: {current_query}\\n"
+        "Answer the current question directly and clearly."
+    )
+
+
+def build_rag_system_prompt(max_messages: int = 6, max_chars_per_message: int = 600) -> str:
+    """Build RAG system prompt with optional conversation memory context."""
+    base_prompt = """You are an intelligent assistant that answers questions based on provided documents.
+            
+            Guidelines:
+            - Answer questions using only the information from the provided documents
+            - Be clear and concise in your responses
+            - If the information is not in the documents, clearly state that
+            - Cite the document and chunk number when relevant"""
+
+    if not st.session_state.get("conversation_memory_enabled", False):
+        return base_prompt
+
+    history = st.session_state.get("chat_history", [])
+    if not history:
+        return base_prompt
+
+    recent_messages = history[-max_messages:]
+    formatted_history = []
+
+    for msg in recent_messages:
+        role = "User" if msg.get("role") == "user" else "Assistant"
+        content = (msg.get("content") or "").strip()
+        if not content:
+            continue
+        if len(content) > max_chars_per_message:
+            content = content[:max_chars_per_message] + "..."
+        formatted_history.append(f"{role}: {content}")
+
+    if not formatted_history:
+        return base_prompt
+
+    return (
+        f"{base_prompt}\\n\\n"
+        "Conversation context from previous turns (use only to resolve references; "
+        "do not override document evidence):\\n"
+        + "\\n".join(formatted_history)
+    )
 
 
 # App Title
@@ -270,6 +379,7 @@ if st.session_state["previous_query_mode"] != query_mode:
         st.session_state["user_decision_made"] = False
     # Reset query input and increment widget counter when switching modes
     st.session_state["query_input"] = ""
+    st.session_state["chat_history"] = []
     st.session_state["widget_refresh_counter"] += 1
     st.session_state["previous_query_mode"] = query_mode
 
@@ -438,6 +548,9 @@ st.divider()
 query_step = "3️⃣" if show_upload else "2️⃣"
 st.subheader(f"{query_step} Querying")
 
+st.subheader("💬 Conversation")
+render_chat_history()
+
 # Check if documents exist for RAG mode - must be done every time
 has_documents = False
 if show_upload:
@@ -448,6 +561,14 @@ if show_upload:
     # Show clear warning when no documents
     if not has_documents:
         st.error("🚫 **RAG Query requires documents!** Please upload documents above first.")
+
+# Ask button state
+if show_upload and not has_documents:
+    ask_button_disabled = True
+    button_help = "Upload documents first to enable RAG queries"
+else:
+    ask_button_disabled = False
+    button_help = None
 
 query_col, options_col = st.columns([3, 1])
 
@@ -469,18 +590,34 @@ with query_col:
     if "query_input" not in st.session_state:
         st.session_state["query_input"] = ""
     
-    # Render text area with explicit disabled state
-    query_text = st.text_area(
-        "Your question:",
-        value=st.session_state["query_input"],
-        placeholder=placeholder,
-        height=120,
-        disabled=query_disabled,
-        key=f"query_text_area_{st.session_state['widget_refresh_counter']}",
-        help="Text input is disabled until documents are uploaded" if query_disabled else None
-    )
+    with st.form(key=f"query_form_{st.session_state['widget_refresh_counter']}"):
+        # Ctrl+Enter submits this form
+        query_text = st.text_area(
+            "Your question:",
+            value=st.session_state["query_input"],
+            placeholder=placeholder,
+            height=120,
+            disabled=query_disabled,
+            key=f"query_text_area_{st.session_state['widget_refresh_counter']}",
+            help="Text input is disabled until documents are uploaded" if query_disabled else None
+        )
+
+        ask_clicked = st.form_submit_button(
+            "🔍 Ask",
+            use_container_width=True,
+            type="primary",
+            disabled=ask_button_disabled,
+            help=button_help
+        )
 
 with options_col:
+    memory_toggle = st.toggle(
+        "🧠 Conversation Memory",
+        value=st.session_state["conversation_memory_enabled"],
+        help="ON: Use recent chat turns as context. OFF: Treat each question independently."
+    )
+    st.session_state["conversation_memory_enabled"] = memory_toggle
+
     if show_upload:
         # Explicitly disable all options when no documents
         is_disabled = not has_documents
@@ -509,25 +646,7 @@ with options_col:
         use_agent = False  # Agent not applicable for direct LLM queries
         show_details = False
 
-# Query buttons
-ask_col, clear_col = st.columns([1, 1])
-
-with ask_col:
-    # Explicitly disable Ask button when in RAG mode with no documents
-    if show_upload and not has_documents:
-        ask_button_disabled = True
-        button_help = "Upload documents first to enable RAG queries"
-    else:
-        ask_button_disabled = False
-        button_help = None
-    
-    ask_clicked = st.button(
-        "🔍 Ask", 
-        use_container_width=True, 
-        type="primary", 
-        disabled=ask_button_disabled,
-        help=button_help
-    )
+clear_col, _ = st.columns([1, 1])
 
 with clear_col:
     # Disable Clear button when in RAG mode with no documents
@@ -542,6 +661,7 @@ with clear_col:
 # Handle clear button - clears immediately and forces widget refresh
 if clear_clicked:
     st.session_state["query_input"] = ""
+    st.session_state["chat_history"] = []
     st.session_state["widget_refresh_counter"] += 1  # Force widget recreation
     st.rerun()
 
@@ -553,48 +673,34 @@ if ask_clicked:
         with st.spinner("🤔 Thinking..."):
             try:
                 query = query_text.strip()
+                contextual_query = build_contextual_query(query)
+                st.session_state["chat_history"].append({
+                    "role": "user",
+                    "content": query
+                })
+                retrieved_docs = []
                 
                 # Determine if we need RAG
                 if show_upload and has_documents:
+                    rag_system_prompt = build_rag_system_prompt()
+
                     # RAG Query
                     if use_agent:
                         # Use agent for complex queries (handles retrieval internally)
                         agent = AIAgent(pipeline)
-                        result = agent.process_query(query, top_k=top_k)
+                        result = agent.process_query(query, top_k=top_k, system_prompt=rag_system_prompt)
                         response = result.get('response', '')
                         retrieved_docs = result.get('retrieved_docs', [])
                     else:
                         # Standard RAG response
                         retrieved_docs = pipeline.retrieve(query, top_k=top_k)
-                        response = pipeline.generate_response(query, retrieved_docs)
-                    
-                    # Display response
-                    st.success("✅ Answer:")
-                    st.markdown(response)
-                    
-                    # Show details if requested
-                    if show_details:
-                        st.divider()
-                        st.subheader("📚 Retrieved Documents")
-                        
-                        if not retrieved_docs:
-                            st.info("No relevant documents found.")
-                        else:
-                            for idx, doc in enumerate(retrieved_docs, 1):
-                                similarity = doc.get('similarity', 0)
-                                source = doc.get('source_file', 'Unknown')
-                                chunk_index = doc.get('chunk_index', 0)
-                                total_chunks = doc.get('total_chunks', 0)
-                                content = doc.get('content', '')
-                                
-                                with st.expander(f"📄 Document {idx}: {source} (chunk {chunk_index}/{total_chunks}) - Similarity: {similarity:.3f}"):
-                                    st.text(content)
+                        response = pipeline.generate_response(query, retrieved_docs, system_prompt=rag_system_prompt)
                 
                 else:
                     # Direct LLM Query (no RAG)
                     if use_agent:
                         agent = AIAgent(pipeline)
-                        result = agent.process_query(query, top_k=0)
+                        result = agent.process_query(contextual_query, top_k=0)
                         response = result.get('response', '')
                     else:
                         # Direct LLM call without retrieval - use custom prompt
@@ -610,15 +716,27 @@ if ask_clicked:
                         # Call LLM directly with custom prompt
                         messages = [
                             pipeline.SystemMessage(content=direct_system_prompt),
-                            pipeline.HumanMessage(content=query)
+                            pipeline.HumanMessage(content=contextual_query)
                         ]
                         response = pipeline.llm.invoke(messages).content
-                    
-                    st.success("✅ Answer:")
-                    st.markdown(response)
+
+                st.session_state["chat_history"].append({
+                    "role": "assistant",
+                    "content": response,
+                    "retrieved_docs": retrieved_docs,
+                    "show_details": show_details if show_upload else False
+                })
+
+                st.session_state["query_input"] = ""
+                st.session_state["widget_refresh_counter"] += 1
+                st.rerun()
             
             except Exception as e:
                 st.error(f"❌ Error: {str(e)}")
+                st.session_state["chat_history"].append({
+                    "role": "assistant",
+                    "content": f"❌ Error: {str(e)}"
+                })
                 logger.error(f"Query error: {str(e)}")
 
 # Footer
