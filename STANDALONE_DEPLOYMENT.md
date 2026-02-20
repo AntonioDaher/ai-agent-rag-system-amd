@@ -116,8 +116,9 @@ ai_agent_rag_system/
 
 ### In App (Sidebar):
 - **Groq API Key**: Your API key
-- **LLM Model**: Choose from 3 models
+- **LLM Model**: Choose from available models in the dropdown
 - **Temperature**: Control randomness (0.0 - 1.0)
+- **Conversation Memory**: Toggle ON/OFF for multi-turn chat context
 
 ### In Code (`src/config/settings.py`):
 - **Chunk Size**: 500 tokens (default)
@@ -175,8 +176,7 @@ textColor = "#262730"         # Text
 
 In the sidebar's "Advanced Settings", you can choose:
 - `llama-3.3-70b-versatile` (Recommended - Newest and fastest)
-- `llama3-70b-8192` (Good quality)
-- `mixtral-8x7b-32768` (Good for long context)
+- `llama-3.1-8b-instant` (Faster responses)
 
 All models are free on Groq!
 
@@ -197,6 +197,8 @@ Then implement processors in `src/document_processor/processor.py`
 3. **Reset when needed**: Use "Reset Store" button to clear all indexed documents
 4. **Monitor usage**: Check Groq dashboard for API usage (30 req/min free limit)
 5. **Test locally first**: Always test on local machine before deploying
+6. **Fast submit**: Use Ctrl+Enter in the query box (same as Ask)
+7. **Mode isolation**: Switching query mode clears conversation flow by design
 
 ## 🆘 Getting Help
 

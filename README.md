@@ -254,12 +254,14 @@ The app will open at `http://localhost:8501`
 2. **Configure Retrieval**
    - **Results (Top-K)**: Number of chunks to retrieve (1-10)
    - **Use Agent**: Enable for complex queries
+   - **Conversation Memory**: ON/OFF toggle for multi-turn context
    - **Show Details**: Display retrieved chunks
 
 3. **Ask Questions**
    - Type your question in the text area
-   - Click "Ask" to get answer
+   - Click "Ask" or press **Ctrl+Enter** to submit
    - Use "Clear" to reset input
+   - Conversation flow clears automatically when switching query modes
 
 4. **Review Results**
    - Answer displayed with sources
